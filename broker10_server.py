@@ -1,4 +1,3 @@
-
 """
 ═══════════════════════════════════════════════════════════════════════════════
   BROKER 10 API SERVER - TRADER CRISTÃO (Socket Puro)
@@ -13,31 +12,29 @@ import time
 import threading
 import socket
 from datetime import datetime
+
 print("INICIO DO SERVIDOR")
+
 # Importa a API da Broker 10
 try:
     print("TESTANDO IMPORTS...")
-
     from stable_api import Broker10_Api
     print("OK stable_api")
-
     import constants as OP_code
     print("OK constants")
-
     import global_value
     print("OK global_value")
-
     API_AVAILABLE = True
     print("BROKER API CARREGADA")
-
 except Exception as e:
     API_AVAILABLE = False
-
     print("################################")
     print("ERRO IMPORTANDO API")
     print(type(e).__name__)
     print(str(e))
-    print("################################")# Configurações
+    print("################################")
+
+# Configurações
 API_PORT = int(os.environ.get("PORT", 5000))
 
 # Estado global
@@ -58,61 +55,53 @@ class AppState:
         }
 
     def connect(self):
-    if not API_AVAILABLE:
-        self.error = "API broker10api não instalada"
-        return False
-
-    creds = self.get_credentials()
-
-    if not creds["email"] or not creds["password"]:
-        self.error = "Credenciais não configuradas"
-        return False
-
-    try:
-        print(f"[{datetime.now()}] Conectando na Broker 10...")
-
-        self.api_instance = Broker10_Api(
-            creds["email"],
-            creds["password"]
-        )
-
-        ok, reason = self.api_instance.connect()
-
-        print(f"RESULTADO CONNECT: ok={ok}")
-        print(f"REASON: {reason}")
-
-        if ok:
-            self.connected = True
-            self.error = None
-
-            try:
-                self.balance = self.api_instance.get_balance()
-                self.currency = self.api_instance.get_currency()
-                self.mode = self.api_instance.get_balance_mode()
-            except Exception as e:
-                print(f"Erro obtendo saldo: {e}")
-
-            print(f"[{datetime.now()}] Conectado!")
-            return True
-
-        else:
-            self.connected = False
-            self.error = str(reason)
-
-            print(f"FALHA CONNECT: {reason}")
-
+        if not API_AVAILABLE:
+            self.error = "API broker10api não instalada"
             return False
 
-    except Exception as e:
-        print("ERRO COMPLETO DA BROKER:")
-        print(type(e).__name__)
-        print(str(e))
+        creds = self.get_credentials()
 
-        self.connected = False
-        self.error = str(e)
+        if not creds["email"] or not creds["password"]:
+            self.error = "Credenciais não configuradas"
+            return False
 
-        return False
+        try:
+            print(f"[{datetime.now()}] Conectando na Broker 10...")
+            self.api_instance = Broker10_Api(
+                creds["email"],
+                creds["password"]
+            )
+            ok, reason = self.api_instance.connect()
+            print(f"RESULTADO CONNECT: ok={ok}")
+            print(f"REASON: {reason}")
+
+            if ok:
+                self.connected = True
+                self.error = None
+                try:
+                    self.balance = self.api_instance.get_balance()
+                    self.currency = self.api_instance.get_currency()
+                    self.mode = self.api_instance.get_balance_mode()
+                except Exception as e:
+                    print(f"Erro obtendo saldo: {e}")
+                print(f"[{datetime.now()}] Conectado!")
+                return True
+            else:
+                self.connected = False
+                self.error = str(reason)
+                print(f"FALHA CONNECT: {reason}")
+                return False
+
+        except Exception as e:
+            print("ERRO COMPLETO DA BROKER:")
+            print(type(e).__name__)
+            print(str(e))
+            self.connected = False
+            self.error = str(e)
+            return False
+
 app_state = AppState()
+
 
 def parse_request(data):
     """Parse simples de requisição HTTP"""
@@ -147,9 +136,15 @@ def parse_request(data):
 
     return method, path, query, body
 
+
 def send_response(conn, status_code, data):
     """Envia resposta HTTP"""
-    status_text = {200: "OK", 404: "Not Found", 500: "Internal Server Error", 503: "Service Unavailable"}
+    status_text = {
+        200: "OK",
+        404: "Not Found",
+        500: "Internal Server Error",
+        503: "Service Unavailable"
+    }
     text = status_text.get(status_code, "Unknown")
 
     body = json.dumps(data)
@@ -163,6 +158,7 @@ def send_response(conn, status_code, data):
     response += body
 
     conn.sendall(response.encode("utf-8"))
+
 
 def handle_request(conn, addr):
     """Processa uma requisição"""
@@ -215,7 +211,7 @@ def handle_request(conn, addr):
                     with app_state.lock:
                         app_state.balance = app_state.api_instance.get_balance()
                         app_state.currency = app_state.api_instance.get_currency()
-                        app_state.mode = app_state.api_instance.get_balance_mode()
+                        self.mode = app_state.api_instance.get_balance_mode()
                 except Exception as e:
                     send_response(conn, 500, {"error": str(e)})
                     return
@@ -413,6 +409,7 @@ def handle_request(conn, addr):
     finally:
         conn.close()
 
+
 def run_server():
     """Inicia o servidor socket"""
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -432,6 +429,7 @@ def run_server():
         thread = threading.Thread(target=handle_request, args=(conn, addr))
         thread.daemon = True
         thread.start()
+
 
 if __name__ == "__main__":
     print("=" * 60)
