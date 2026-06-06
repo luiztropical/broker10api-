@@ -13,28 +13,31 @@ import time
 import threading
 import socket
 from datetime import datetime
-
+print("INICIO DO SERVIDOR")
 # Importa a API da Broker 10
 try:
+    print("TESTANDO IMPORTS...")
+
     from stable_api import Broker10_Api
+    print("OK stable_api")
+
     import constants as OP_code
+    print("OK constants")
+
     import global_value
+    print("OK global_value")
 
     API_AVAILABLE = True
-    print("✓ Broker10 API carregada com sucesso")
+    print("BROKER API CARREGADA")
 
 except Exception as e:
     API_AVAILABLE = False
 
-    print("================================")
-    print("ERRO AO CARREGAR API")
+    print("################################")
+    print("ERRO IMPORTANDO API")
     print(type(e).__name__)
     print(str(e))
-    print("================================")
-except ImportError as e:
-    print(f"AVISO: broker10api não encontrado: {e}")
-    API_AVAILABLE = False
-# Configurações
+    print("################################")# Configurações
 API_PORT = int(os.environ.get("PORT", 5000))
 
 # Estado global
