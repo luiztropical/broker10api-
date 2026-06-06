@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: broker10-api-server
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python broker10_server.py
+    envVars:
+      - key: BROKER_EMAIL
+        sync: false  # Você configura no painel do Render
+      - key: BROKER_PASSWORD
+        sync: false  # Você configura no painel do Render
+      - key: PYTHON_VERSION
+        value: 3.9.0
