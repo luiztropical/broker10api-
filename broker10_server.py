@@ -16,11 +16,14 @@ from datetime import datetime
 
 # Importa a API da Broker 10
 try:
-    from stable_api import Broker10_Api
-    import constants as OP_code
-    import global_value
-    API_AVAILABLE = True
-    print("✓ Broker10 API carregada com sucesso")
+    except Exception as e:
+    API_AVAILABLE = False
+
+    print("================================")
+    print("ERRO AO CARREGAR API")
+    print(type(e).__name__)
+    print(str(e))
+    print("================================")
 except ImportError as e:
     print(f"AVISO: broker10api não encontrado: {e}")
     API_AVAILABLE = False
