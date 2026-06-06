@@ -1,7 +1,7 @@
 
 """
 ═══════════════════════════════════════════════════════════════════════════════
-  BROKER 10 API SERVER - TRADER CRISTÃO
+  BROKER 10 API SERVER - TRADER CRISTÃO (v2)
   Servidor REST que conecta na Broker 10 e expõe dados para seu aplicativo web
   Hospedar no Render.com (gratuito) ou Railway.app
 ═══════════════════════════════════════════════════════════════════════════════
@@ -15,14 +15,7 @@ import json
 import threading
 from datetime import datetime
 
-# Importa a API da Broker 10 (os arquivos que você enviou)
-# Na hospedagem, você precisa ter esses arquivos instalados como pacote
-# Ou usar: pip install broker10api (se estiver no PyPI)
-# Por enquanto, vou assumir que os arquivos estão no mesmo diretório
-
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+# Importa a API da Broker 10
 try:
     from broker10api.stable_api import Broker10_Api
     import broker10api.constants as OP_code
@@ -32,112 +25,110 @@ except ImportError:
     Broker10_Api = None
 
 app = Flask(__name__)
-CORS(app)  # Permite chamadas de qualquer origem (seu aplicativo web)
+CORS(app)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES
+# CONFIGURAÇÕES (lidas do ambiente)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Pegar do ambiente (Render.com) ou usar padrão
-BROKER_EMAIL = os.environ.get("BROKER_EMAIL", "seu_email@exemplo.com")
-BROKER_PASSWORD = os.environ.get("BROKER_PASSWORD", "sua_senha")
 API_PORT = int(os.environ.get("PORT", 5000))
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ESTADO GLOBAL
+# CLASSE PARA GERENCIAR ESTADO (evita uso de global)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-api_instance = None
-connection_status = {
-    "connected": False,
-    "last_check": None,
-    "error": None,
-    "profile": None,
-    "balance": None,
-    "currency": None,
-    "mode": "PRACTICE"
-}
+class AppState:
+    def __init__(self):
+        self.api_instance = None
+        self.connection_status = {
+            "connected": False,
+            "last_check": None,
+            "error": None,
+            "profile": None,
+            "balance": None,
+            "currency": None,
+            "mode": "PRACTICE"
+        }
+        self.api_lock = threading.Lock()
 
-# Cache de dados
-cache = {
-    "candles": {},
-    "payouts": {},
-    "actives": {},
-    "last_update": 0
-}
+    def get_credentials(self):
+        """Pega credenciais do ambiente"""
+        return {
+            "email": os.environ.get("BROKER_EMAIL", ""),
+            "password": os.environ.get("BROKER_PASSWORD", "")
+        }
 
-# Lock para operações thread-safe
-api_lock = threading.Lock()
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# FUNÇÕES DE CONEXÃO
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def connect_broker():
-    """Conecta na Broker 10"""
-    global api_instance, connection_status
-
-    if Broker10_Api is None:
-        connection_status["error"] = "API broker10api não instalada"
-        return False
-
-    try:
-        print(f"[{datetime.now()}] Conectando na Broker 10...")
-        api_instance = Broker10_Api(BROKER_EMAIL, BROKER_PASSWORD)
-        ok, reason = api_instance.connect()
-
-        if ok:
-            connection_status["connected"] = True
-            connection_status["error"] = None
-            connection_status["last_check"] = time.time()
-
-            # Pega informações do perfil
-            try:
-                profile = api_instance.get_profile()
-                connection_status["profile"] = profile
-            except:
-                pass
-
-            # Pega saldo
-            try:
-                balance = api_instance.get_balance()
-                connection_status["balance"] = balance
-            except:
-                pass
-
-            # Pega moeda
-            try:
-                currency = api_instance.get_currency()
-                connection_status["currency"] = currency
-            except:
-                pass
-
-            # Pega modo
-            try:
-                mode = api_instance.get_balance_mode()
-                connection_status["mode"] = mode
-            except:
-                pass
-
-            print(f"[{datetime.now()}] ✅ Conectado! Saldo: {connection_status['balance']} {connection_status['currency']}")
-            return True
-        else:
-            connection_status["connected"] = False
-            connection_status["error"] = str(reason)
-            print(f"[{datetime.now()}] ❌ Erro: {reason}")
+    def connect(self):
+        """Conecta na Broker 10"""
+        if Broker10_Api is None:
+            self.connection_status["error"] = "API broker10api não instalada"
             return False
 
-    except Exception as e:
-        connection_status["connected"] = False
-        connection_status["error"] = str(e)
-        print(f"[{datetime.now()}] ❌ Exceção: {e}")
-        return False
+        creds = self.get_credentials()
+        if not creds["email"] or not creds["password"]:
+            self.connection_status["error"] = "Credenciais não configuradas"
+            return False
 
-def ensure_connection():
-    """Garante que está conectado"""
-    if not connection_status["connected"] or api_instance is None:
-        return connect_broker()
-    return True
+        try:
+            print(f"[{datetime.now()}] Conectando na Broker 10...")
+            self.api_instance = Broker10_Api(creds["email"], creds["password"])
+            ok, reason = self.api_instance.connect()
+
+            if ok:
+                self.connection_status["connected"] = True
+                self.connection_status["error"] = None
+                self.connection_status["last_check"] = time.time()
+
+                # Pega informações do perfil
+                try:
+                    profile = self.api_instance.get_profile()
+                    self.connection_status["profile"] = profile
+                except:
+                    pass
+
+                # Pega saldo
+                try:
+                    balance = self.api_instance.get_balance()
+                    self.connection_status["balance"] = balance
+                except:
+                    pass
+
+                # Pega moeda
+                try:
+                    currency = self.api_instance.get_currency()
+                    self.connection_status["currency"] = currency
+                except:
+                    pass
+
+                # Pega modo
+                try:
+                    mode = self.api_instance.get_balance_mode()
+                    self.connection_status["mode"] = mode
+                except:
+                    pass
+
+                print(f"[{datetime.now()}] Conectado! Saldo: {self.connection_status['balance']} {self.connection_status['currency']}")
+                return True
+            else:
+                self.connection_status["connected"] = False
+                self.connection_status["error"] = str(reason)
+                print(f"[{datetime.now()}] Erro: {reason}")
+                return False
+
+        except Exception as e:
+            self.connection_status["connected"] = False
+            self.connection_status["error"] = str(e)
+            print(f"[{datetime.now()}] Exceção: {e}")
+            return False
+
+    def ensure_connection(self):
+        """Garante que está conectado"""
+        if not self.connection_status["connected"] or self.api_instance is None:
+            return self.connect()
+        return True
+
+# Instancia o estado global da aplicação
+app_state = AppState()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENDPOINTS DA API
@@ -149,8 +140,8 @@ def home():
     return jsonify({
         "status": "online",
         "service": "Broker 10 API Server - TRADER CRISTÃO",
-        "version": "1.0",
-        "connected": connection_status["connected"],
+        "version": "2.0",
+        "connected": app_state.connection_status["connected"],
         "timestamp": datetime.now().isoformat()
     })
 
@@ -158,12 +149,12 @@ def home():
 def status():
     """Status da conexão"""
     return jsonify({
-        "connected": connection_status["connected"],
-        "balance": connection_status["balance"],
-        "currency": connection_status["currency"],
-        "mode": connection_status["mode"],
-        "error": connection_status["error"],
-        "last_check": connection_status["last_check"]
+        "connected": app_state.connection_status["connected"],
+        "balance": app_state.connection_status["balance"],
+        "currency": app_state.connection_status["currency"],
+        "mode": app_state.connection_status["mode"],
+        "error": app_state.connection_status["error"],
+        "last_check": app_state.connection_status["last_check"]
     })
 
 @app.route("/connect", methods=["POST"])
@@ -171,36 +162,33 @@ def api_connect():
     """Força reconexão"""
     data = request.get_json() or {}
 
-    # Permite sobrescrever credenciais via request
-    email = data.get("email", BROKER_EMAIL)
-    password = data.get("password", BROKER_PASSWORD)
+    # Permite sobrescrever credenciais via request (opcional)
+    if data.get("email"):
+        os.environ["BROKER_EMAIL"] = data["email"]
+    if data.get("password"):
+        os.environ["BROKER_PASSWORD"] = data["password"]
 
-    # Atualiza variáveis globais
-    global BROKER_EMAIL, BROKER_PASSWORD
-    BROKER_EMAIL = email
-    BROKER_PASSWORD = password
-
-    ok = connect_broker()
+    ok = app_state.connect()
     return jsonify({
         "success": ok,
-        "status": connection_status
+        "status": app_state.connection_status
     })
 
 @app.route("/balance")
 def api_balance():
     """Retorna saldo atual"""
-    if not ensure_connection():
-        return jsonify({"error": "Não conectado", "status": connection_status}), 503
+    if not app_state.ensure_connection():
+        return jsonify({"error": "Não conectado", "status": app_state.connection_status}), 503
 
     try:
-        with api_lock:
-            balance = api_instance.get_balance()
-            currency = api_instance.get_currency()
-            mode = api_instance.get_balance_mode()
+        with app_state.api_lock:
+            balance = app_state.api_instance.get_balance()
+            currency = app_state.api_instance.get_currency()
+            mode = app_state.api_instance.get_balance_mode()
 
-            connection_status["balance"] = balance
-            connection_status["currency"] = currency
-            connection_status["mode"] = mode
+            app_state.connection_status["balance"] = balance
+            app_state.connection_status["currency"] = currency
+            app_state.connection_status["mode"] = mode
 
             return jsonify({
                 "balance": balance,
@@ -213,13 +201,12 @@ def api_balance():
 @app.route("/actives")
 def api_actives():
     """Retorna pares disponíveis (abertos)"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
     try:
-        with api_lock:
-            # Pega dados de inicialização
-            data = api_instance.get_all_init_v2(0.1)
+        with app_state.api_lock:
+            data = app_state.api_instance.get_all_init_v2(0.1)
 
             binarias = []
             turbo = []
@@ -247,19 +234,17 @@ def api_actives():
 @app.route("/candles/<active>")
 def api_candles(active):
     """Retorna candles de um par"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
-    # Parâmetros da query
-    interval = int(request.args.get("interval", 60))  # segundos (60=M1, 300=M5)
+    interval = int(request.args.get("interval", 60))
     count = int(request.args.get("count", 10))
 
     try:
-        with api_lock:
+        with app_state.api_lock:
             endtime = time.time()
-            candles = api_instance.get_candles(active, interval, count, endtime)
+            candles = app_state.api_instance.get_candles(active, interval, count, endtime)
 
-            # Formata candles
             formatted = []
             for c in candles:
                 formatted.append({
@@ -284,14 +269,14 @@ def api_candles(active):
 @app.route("/payout/<active>")
 def api_payout(active):
     """Retorna payout de um par"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
     timeframe = int(request.args.get("timeframe", 1))
 
     try:
-        with api_lock:
-            payout = api_instance.get_payout(active, timeframe)
+        with app_state.api_lock:
+            payout = app_state.api_instance.get_payout(active, timeframe)
             return jsonify({
                 "active": active,
                 "timeframe": timeframe,
@@ -303,7 +288,7 @@ def api_payout(active):
 @app.route("/buy", methods=["POST"])
 def api_buy():
     """Executa uma ordem de compra"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
     data = request.get_json()
@@ -312,16 +297,15 @@ def api_buy():
 
     active = data.get("active")
     amount = data.get("amount", 1)
-    direction = data.get("direction", "CALL")  # CALL ou PUT
-    expiration = data.get("expiration", 1)  # minutos
+    direction = data.get("direction", "CALL")
+    expiration = data.get("expiration", 1)
 
     if not active:
         return jsonify({"error": "Par de moedas não especificado"}), 400
 
     try:
-        with api_lock:
-            # Executa ordem binária
-            status, order_id = api_instance.buy_binary(active, amount, direction, expiration)
+        with app_state.api_lock:
+            status, order_id = app_state.api_instance.buy_binary(active, amount, direction, expiration)
 
             return jsonify({
                 "success": status,
@@ -337,14 +321,13 @@ def api_buy():
 @app.route("/check/<order_id>")
 def api_check(order_id):
     """Verifica resultado de uma ordem"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
     try:
-        with api_lock:
-            # Tenta check_win_v3 (para binárias)
+        with app_state.api_lock:
             try:
-                result = api_instance.check_win_v3(order_id, polling_time=1)
+                result = app_state.api_instance.check_win_v3(order_id, polling_time=1)
                 return jsonify({
                     "order_id": order_id,
                     "profit": result,
@@ -353,9 +336,8 @@ def api_check(order_id):
             except:
                 pass
 
-            # Fallback para check_win_v2
             try:
-                result = api_instance.check_win_v2(order_id, polling_time=1)
+                result = app_state.api_instance.check_win_v2(order_id, polling_time=1)
                 return jsonify({
                     "order_id": order_id,
                     "profit": result,
@@ -372,16 +354,16 @@ def api_check(order_id):
 @app.route("/change_mode", methods=["POST"])
 def api_change_mode():
     """Troca entre REAL e PRACTICE"""
-    if not ensure_connection():
+    if not app_state.ensure_connection():
         return jsonify({"error": "Não conectado"}), 503
 
     data = request.get_json() or {}
     mode = data.get("mode", "PRACTICE")
 
     try:
-        with api_lock:
-            api_instance.change_balance(mode)
-            connection_status["mode"] = mode
+        with app_state.api_lock:
+            app_state.api_instance.change_balance(mode)
+            app_state.connection_status["mode"] = mode
             return jsonify({"success": True, "mode": mode})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -391,13 +373,8 @@ def api_change_mode():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    # Tenta conectar ao iniciar
     print("=" * 60)
-    print("  BROKER 10 API SERVER - TRADER CRISTÃO")
+    print("  BROKER 10 API SERVER - TRADER CRISTÃO v2")
     print("=" * 60)
 
-    # Conecta na inicialização (opcional)
-    # connect_broker()
-
-    # Inicia servidor
     app.run(host="0.0.0.0", port=API_PORT, debug=False)
