@@ -70,7 +70,11 @@ class AppState:
         try:
             print(f"[{datetime.now()}] Conectando na Broker 10...")
             self.api_instance = Broker10_Api(creds["email"], creds["password"])
+
             ok, reason = self.api_instance.connect()
+
+            print(f"RESULTADO CONNECT: ok={ok}")
+            print(f"REASON: {reason}")
 
             if ok:
                 self.connected = True
@@ -88,9 +92,13 @@ class AppState:
                 self.error = str(reason)
                 return False
         except Exception as e:
-            self.connected = False
-            self.error = str(e)
-            return False
+    print("ERRO COMPLETO DA BROKER:")
+    print(type(e))
+    print(str(e))
+
+    self.connected = False
+    self.error = str(e)
+    return False
 
 app_state = AppState()
 
