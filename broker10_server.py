@@ -65,15 +65,24 @@ class AppState:
             self.error = "Credenciais não configuradas"
             return False
 
-        try:
-            print(f"[{datetime.now()}] Conectando na Broker 10...")
-            self.api_instance = Broker10_Api(
-                creds["email"],
-                creds["password"]
-            )
-            ok, reason = self.api_instance.connect()
-            print(f"RESULTADO CONNECT: ok={ok}")
-            print(f"REASON: {reason}")
+       try:
+    print("=" * 60)
+    print("INICIANDO LOGIN BROKER10")
+    print("EMAIL:", creds["email"])
+    print("=" * 60)
+
+    self.api_instance = Broker10_Api(
+        creds["email"],
+        creds["password"]
+    )
+
+    print("OBJETO API CRIADO")
+
+    ok, reason = self.api_instance.connect()
+
+    print("RESULTADO LOGIN:")
+    print("OK =", ok)
+    print("REASON =", reason)
 
             if ok:
                 self.connected = True
