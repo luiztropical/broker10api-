@@ -1,8 +1,8 @@
 
 """
 ═══════════════════════════════════════════════════════════════════════════════
-  BROKER 10 API SERVER - TRADER CRISTÃO (Versão Simples)
-  Servidor HTTP nativo Python - funciona em qualquer versão!
+  BROKER 10 API SERVER - TRADER CRISTÃO (Socket Puro)
+  Servidor HTTP feito com sockets TCP puros - funciona em qualquer Python!
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
@@ -11,9 +11,8 @@ import sys
 import json
 import time
 import threading
+import socket
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import urllib.parse
 
 # Importa a API da Broker 10
 try:
@@ -82,34 +81,88 @@ class AppState:
 
 app_state = AppState()
 
-class APIHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        # Silencia logs padrão
-        pass
+def parse_request(data):
+    """Parse simples de requisição HTTP"""
+    lines = data.split("\r\n")
+    if not lines:
+        return None, None, None, {}
 
-    def _send_json(self, status_code, data):
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode("utf-8"))
+    first_line = lines[0]
+    parts = first_line.split(" ")
+    if len(parts) < 2:
+        return None, None, None, {}
 
-    def do_OPTIONS(self):
-        self._send_json(200, {"status": "ok"})
+    method = parts[0]
+    path = parts[1]
 
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        query = urllib.parse.parse_qs(parsed.query)
+    # Parse query string
+    if "?" in path:
+        path, query_str = path.split("?", 1)
+        query = {}
+        for param in query_str.split("&"):
+            if "=" in param:
+                k, v = param.split("=", 1)
+                query[k] = v
+    else:
+        query = {}
+
+    # Parse body
+    body = ""
+    if "\r\n\r\n" in data:
+        header_end = data.index("\r\n\r\n") + 4
+        body = data[header_end:]
+
+    return method, path, query, body
+
+def send_response(conn, status_code, data):
+    """Envia resposta HTTP"""
+    status_text = {200: "OK", 404: "Not Found", 500: "Internal Server Error", 503: "Service Unavailable"}
+    text = status_text.get(status_code, "Unknown")
+
+    body = json.dumps(data)
+    response = f"HTTP/1.1 {status_code} {text}\r\n"
+    response += "Content-Type: application/json\r\n"
+    response += "Access-Control-Allow-Origin: *\r\n"
+    response += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+    response += "Access-Control-Allow-Headers: Content-Type\r\n"
+    response += f"Content-Length: {len(body)}\r\n"
+    response += "\r\n"
+    response += body
+
+    conn.sendall(response.encode("utf-8"))
+
+def handle_request(conn, addr):
+    """Processa uma requisição"""
+    try:
+        data = conn.recv(4096).decode("utf-8")
+        if not data:
+            return
+
+        method, path, query, body = parse_request(data)
+
+        if not method or not path:
+            send_response(conn, 400, {"error": "Requisição inválida"})
+            return
+
+        # Handle OPTIONS (CORS preflight)
+        if method == "OPTIONS":
+            send_response(conn, 200, {"status": "ok"})
+            return
+
+        # Parse body JSON for POST
+        body_data = {}
+        if body:
+            try:
+                body_data = json.loads(body)
+            except:
+                pass
 
         # Rota raiz - status
         if path == "/" or path == "/status":
-            self._send_json(200, {
+            send_response(conn, 200, {
                 "status": "online",
                 "service": "Broker 10 API Server - TRADER CRISTÃO",
-                "version": "simple",
+                "version": "socket",
                 "connected": app_state.connected,
                 "balance": app_state.balance,
                 "currency": app_state.currency,
@@ -131,10 +184,10 @@ class APIHandler(BaseHTTPRequestHandler):
                         app_state.currency = app_state.api_instance.get_currency()
                         app_state.mode = app_state.api_instance.get_balance_mode()
                 except Exception as e:
-                    self._send_json(500, {"error": str(e)})
+                    send_response(conn, 500, {"error": str(e)})
                     return
 
-            self._send_json(200, {
+            send_response(conn, 200, {
                 "balance": app_state.balance,
                 "currency": app_state.currency,
                 "mode": app_state.mode
@@ -147,7 +200,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 app_state.connect()
 
             if not app_state.connected:
-                self._send_json(503, {"error": "Não conectado"})
+                send_response(conn, 503, {"error": "Não conectado"})
                 return
 
             try:
@@ -168,27 +221,27 @@ class APIHandler(BaseHTTPRequestHandler):
                                         "is_otc": "OTC" in nome.upper()
                                     })
 
-                    self._send_json(200, {
+                    send_response(conn, 200, {
                         "binary": binarias,
                         "turbo": turbo,
                         "total": len(binarias) + len(turbo)
                     })
                     return
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                send_response(conn, 500, {"error": str(e)})
                 return
 
         # Rota candles
         if path.startswith("/candles/"):
             active = path.split("/")[2]
-            interval = int(query.get("interval", [60])[0])
-            count = int(query.get("count", [10])[0])
+            interval = int(query.get("interval", 60))
+            count = int(query.get("count", 10))
 
             if not app_state.connected:
                 app_state.connect()
 
             if not app_state.connected:
-                self._send_json(503, {"error": "Não conectado"})
+                send_response(conn, 503, {"error": "Não conectado"})
                 return
 
             try:
@@ -209,66 +262,50 @@ class APIHandler(BaseHTTPRequestHandler):
                             "color": "green" if c.get("close", 0) >= c.get("open", 0) else "red"
                         })
 
-                    self._send_json(200, {
+                    send_response(conn, 200, {
                         "active": active,
                         "interval": interval,
                         "candles": formatted
                     })
                     return
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                send_response(conn, 500, {"error": str(e)})
                 return
 
         # Rota payout
         if path.startswith("/payout/"):
             active = path.split("/")[2]
-            timeframe = int(query.get("timeframe", [1])[0])
+            timeframe = int(query.get("timeframe", 1))
 
             if not app_state.connected:
                 app_state.connect()
 
             if not app_state.connected:
-                self._send_json(503, {"error": "Não conectado"})
+                send_response(conn, 503, {"error": "Não conectado"})
                 return
 
             try:
                 with app_state.lock:
                     payout = app_state.api_instance.get_payout(active, timeframe)
-                    self._send_json(200, {
+                    send_response(conn, 200, {
                         "active": active,
                         "timeframe": timeframe,
                         "payout": payout
                     })
                     return
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                send_response(conn, 500, {"error": str(e)})
                 return
 
-        # Rota não encontrada
-        self._send_json(404, {"error": "Rota não encontrada"})
-
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-
-        # Ler body
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8")
-
-        try:
-            data = json.loads(body) if body else {}
-        except:
-            data = {}
-
-        # Rota connect
-        if path == "/connect":
-            if data.get("email"):
-                os.environ["BROKER_EMAIL"] = data["email"]
-            if data.get("password"):
-                os.environ["BROKER_PASSWORD"] = data["password"]
+        # Rota connect (POST)
+        if path == "/connect" and method == "POST":
+            if body_data.get("email"):
+                os.environ["BROKER_EMAIL"] = body_data["email"]
+            if body_data.get("password"):
+                os.environ["BROKER_PASSWORD"] = body_data["password"]
 
             ok = app_state.connect()
-            self._send_json(200, {
+            send_response(conn, 200, {
                 "success": ok,
                 "status": {
                     "connected": app_state.connected,
@@ -280,28 +317,28 @@ class APIHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # Rota buy
-        if path == "/buy":
+        # Rota buy (POST)
+        if path == "/buy" and method == "POST":
             if not app_state.connected:
                 app_state.connect()
 
             if not app_state.connected:
-                self._send_json(503, {"error": "Não conectado"})
+                send_response(conn, 503, {"error": "Não conectado"})
                 return
 
-            active = data.get("active")
-            amount = data.get("amount", 1)
-            direction = data.get("direction", "CALL")
-            expiration = data.get("expiration", 1)
+            active = body_data.get("active")
+            amount = body_data.get("amount", 1)
+            direction = body_data.get("direction", "CALL")
+            expiration = body_data.get("expiration", 1)
 
             if not active:
-                self._send_json(400, {"error": "Par de moedas não especificado"})
+                send_response(conn, 400, {"error": "Par de moedas não especificado"})
                 return
 
             try:
                 with app_state.lock:
                     status, order_id = app_state.api_instance.buy_binary(active, amount, direction, expiration)
-                    self._send_json(200, {
+                    send_response(conn, 200, {
                         "success": status,
                         "order_id": order_id,
                         "active": active,
@@ -311,47 +348,60 @@ class APIHandler(BaseHTTPRequestHandler):
                     })
                     return
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                send_response(conn, 500, {"error": str(e)})
                 return
 
-        # Rota change_mode
-        if path == "/change_mode":
+        # Rota change_mode (POST)
+        if path == "/change_mode" and method == "POST":
             if not app_state.connected:
                 app_state.connect()
 
             if not app_state.connected:
-                self._send_json(503, {"error": "Não conectado"})
+                send_response(conn, 503, {"error": "Não conectado"})
                 return
 
-            mode = data.get("mode", "PRACTICE")
+            mode = body_data.get("mode", "PRACTICE")
 
             try:
                 with app_state.lock:
                     app_state.api_instance.change_balance(mode)
                     app_state.mode = mode
-                    self._send_json(200, {"success": True, "mode": mode})
+                    send_response(conn, 200, {"success": True, "mode": mode})
                     return
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                send_response(conn, 500, {"error": str(e)})
                 return
 
         # Rota não encontrada
-        self._send_json(404, {"error": "Rota não encontrada"})
+        send_response(conn, 404, {"error": "Rota não encontrada"})
+
+    except Exception as e:
+        print(f"Erro ao processar requisição: {e}")
+    finally:
+        conn.close()
 
 def run_server():
-    server = HTTPServer(("0.0.0.0", API_PORT), APIHandler)
-    print(f"[{datetime.now()}] Servidor iniciado na porta {API_PORT}")
-    print(f"[{datetime.now()}] URL: http://0.0.0.0:{API_PORT}")
+    """Inicia o servidor socket"""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", API_PORT))
+    server.listen(5)
+
+    print(f"[{datetime.now()}] Servidor socket iniciado na porta {API_PORT}")
     print(f"[{datetime.now()}] API Broker 10 disponível: {API_AVAILABLE}")
 
     # Tenta conectar na inicialização
     if API_AVAILABLE:
         app_state.connect()
 
-    server.serve_forever()
+    while True:
+        conn, addr = server.accept()
+        thread = threading.Thread(target=handle_request, args=(conn, addr))
+        thread.daemon = True
+        thread.start()
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  BROKER 10 API SERVER - TRADER CRISTÃO (Simples)")
+    print("  BROKER 10 API SERVER - TRADER CRISTÃO (Socket)")
     print("=" * 60)
     run_server()
