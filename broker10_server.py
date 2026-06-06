@@ -1,72 +1,58 @@
 
 """
 ═══════════════════════════════════════════════════════════════════════════════
-  BROKER 10 API SERVER - TRADER CRISTÃO (v2)
-  Servidor REST que conecta na Broker 10 e expõe dados para seu aplicativo web
-  Hospedar no Render.com (gratuito) ou Railway.app
+  BROKER 10 API SERVER - TRADER CRISTÃO (Versão Simples)
+  Servidor HTTP nativo Python - funciona em qualquer versão!
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import os
-import time
+import sys
 import json
+import time
 import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
 
 # Importa a API da Broker 10
 try:
     from broker10api.stable_api import Broker10_Api
     import broker10api.constants as OP_code
     import broker10api.global_value as global_value
-except ImportError:
-    print("AVISO: broker10api não encontrado. Usando modo simulação.")
-    Broker10_Api = None
+    API_AVAILABLE = True
+except ImportError as e:
+    print(f"AVISO: broker10api não encontrado: {e}")
+    API_AVAILABLE = False
 
-app = Flask(__name__)
-CORS(app)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURAÇÕES (lidas do ambiente)
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# Configurações
 API_PORT = int(os.environ.get("PORT", 5000))
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CLASSE PARA GERENCIAR ESTADO (evita uso de global)
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# Estado global
 class AppState:
     def __init__(self):
         self.api_instance = None
-        self.connection_status = {
-            "connected": False,
-            "last_check": None,
-            "error": None,
-            "profile": None,
-            "balance": None,
-            "currency": None,
-            "mode": "PRACTICE"
-        }
-        self.api_lock = threading.Lock()
+        self.connected = False
+        self.error = None
+        self.balance = None
+        self.currency = None
+        self.mode = "PRACTICE"
+        self.lock = threading.Lock()
 
     def get_credentials(self):
-        """Pega credenciais do ambiente"""
         return {
             "email": os.environ.get("BROKER_EMAIL", ""),
             "password": os.environ.get("BROKER_PASSWORD", "")
         }
 
     def connect(self):
-        """Conecta na Broker 10"""
-        if Broker10_Api is None:
-            self.connection_status["error"] = "API broker10api não instalada"
+        if not API_AVAILABLE:
+            self.error = "API broker10api não instalada"
             return False
 
         creds = self.get_credentials()
         if not creds["email"] or not creds["password"]:
-            self.connection_status["error"] = "Credenciais não configuradas"
+            self.error = "Credenciais não configuradas"
             return False
 
         try:
@@ -75,306 +61,297 @@ class AppState:
             ok, reason = self.api_instance.connect()
 
             if ok:
-                self.connection_status["connected"] = True
-                self.connection_status["error"] = None
-                self.connection_status["last_check"] = time.time()
-
-                # Pega informações do perfil
+                self.connected = True
+                self.error = None
                 try:
-                    profile = self.api_instance.get_profile()
-                    self.connection_status["profile"] = profile
+                    self.balance = self.api_instance.get_balance()
+                    self.currency = self.api_instance.get_currency()
+                    self.mode = self.api_instance.get_balance_mode()
                 except:
                     pass
-
-                # Pega saldo
-                try:
-                    balance = self.api_instance.get_balance()
-                    self.connection_status["balance"] = balance
-                except:
-                    pass
-
-                # Pega moeda
-                try:
-                    currency = self.api_instance.get_currency()
-                    self.connection_status["currency"] = currency
-                except:
-                    pass
-
-                # Pega modo
-                try:
-                    mode = self.api_instance.get_balance_mode()
-                    self.connection_status["mode"] = mode
-                except:
-                    pass
-
-                print(f"[{datetime.now()}] Conectado! Saldo: {self.connection_status['balance']} {self.connection_status['currency']}")
+                print(f"[{datetime.now()}] Conectado!")
                 return True
             else:
-                self.connection_status["connected"] = False
-                self.connection_status["error"] = str(reason)
-                print(f"[{datetime.now()}] Erro: {reason}")
+                self.connected = False
+                self.error = str(reason)
                 return False
-
         except Exception as e:
-            self.connection_status["connected"] = False
-            self.connection_status["error"] = str(e)
-            print(f"[{datetime.now()}] Exceção: {e}")
+            self.connected = False
+            self.error = str(e)
             return False
 
-    def ensure_connection(self):
-        """Garante que está conectado"""
-        if not self.connection_status["connected"] or self.api_instance is None:
-            return self.connect()
-        return True
-
-# Instancia o estado global da aplicação
 app_state = AppState()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ENDPOINTS DA API
-# ═══════════════════════════════════════════════════════════════════════════════
+class APIHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Silencia logs padrão
+        pass
 
-@app.route("/")
-def home():
-    """Página inicial - status"""
-    return jsonify({
-        "status": "online",
-        "service": "Broker 10 API Server - TRADER CRISTÃO",
-        "version": "2.0",
-        "connected": app_state.connection_status["connected"],
-        "timestamp": datetime.now().isoformat()
-    })
+    def _send_json(self, status_code, data):
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode("utf-8"))
 
-@app.route("/status")
-def status():
-    """Status da conexão"""
-    return jsonify({
-        "connected": app_state.connection_status["connected"],
-        "balance": app_state.connection_status["balance"],
-        "currency": app_state.connection_status["currency"],
-        "mode": app_state.connection_status["mode"],
-        "error": app_state.connection_status["error"],
-        "last_check": app_state.connection_status["last_check"]
-    })
+    def do_OPTIONS(self):
+        self._send_json(200, {"status": "ok"})
 
-@app.route("/connect", methods=["POST"])
-def api_connect():
-    """Força reconexão"""
-    data = request.get_json() or {}
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
-    # Permite sobrescrever credenciais via request (opcional)
-    if data.get("email"):
-        os.environ["BROKER_EMAIL"] = data["email"]
-    if data.get("password"):
-        os.environ["BROKER_PASSWORD"] = data["password"]
-
-    ok = app_state.connect()
-    return jsonify({
-        "success": ok,
-        "status": app_state.connection_status
-    })
-
-@app.route("/balance")
-def api_balance():
-    """Retorna saldo atual"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado", "status": app_state.connection_status}), 503
-
-    try:
-        with app_state.api_lock:
-            balance = app_state.api_instance.get_balance()
-            currency = app_state.api_instance.get_currency()
-            mode = app_state.api_instance.get_balance_mode()
-
-            app_state.connection_status["balance"] = balance
-            app_state.connection_status["currency"] = currency
-            app_state.connection_status["mode"] = mode
-
-            return jsonify({
-                "balance": balance,
-                "currency": currency,
-                "mode": mode
+        # Rota raiz - status
+        if path == "/" or path == "/status":
+            self._send_json(200, {
+                "status": "online",
+                "service": "Broker 10 API Server - TRADER CRISTÃO",
+                "version": "simple",
+                "connected": app_state.connected,
+                "balance": app_state.balance,
+                "currency": app_state.currency,
+                "mode": app_state.mode,
+                "error": app_state.error,
+                "timestamp": datetime.now().isoformat()
             })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            return
 
-@app.route("/actives")
-def api_actives():
-    """Retorna pares disponíveis (abertos)"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
+        # Rota balance
+        if path == "/balance":
+            if not app_state.connected:
+                app_state.connect()
 
-    try:
-        with app_state.api_lock:
-            data = app_state.api_instance.get_all_init_v2(0.1)
+            if app_state.connected and app_state.api_instance:
+                try:
+                    with app_state.lock:
+                        app_state.balance = app_state.api_instance.get_balance()
+                        app_state.currency = app_state.api_instance.get_currency()
+                        app_state.mode = app_state.api_instance.get_balance_mode()
+                except Exception as e:
+                    self._send_json(500, {"error": str(e)})
+                    return
 
-            binarias = []
-            turbo = []
-
-            for tipo, lista in [("binary", binarias), ("turbo", turbo)]:
-                if tipo in data:
-                    for aid, active in data[tipo]["actives"].items():
-                        nome = str(active["name"]).split(".")[1]
-                        if active["enabled"] and not active["is_suspended"]:
-                            lista.append({
-                                "id": int(aid),
-                                "name": nome,
-                                "type": tipo,
-                                "is_otc": "OTC" in nome.upper()
-                            })
-
-            return jsonify({
-                "binary": binarias,
-                "turbo": turbo,
-                "total": len(binarias) + len(turbo)
+            self._send_json(200, {
+                "balance": app_state.balance,
+                "currency": app_state.currency,
+                "mode": app_state.mode
             })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            return
 
-@app.route("/candles/<active>")
-def api_candles(active):
-    """Retorna candles de um par"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
+        # Rota actives
+        if path == "/actives":
+            if not app_state.connected:
+                app_state.connect()
 
-    interval = int(request.args.get("interval", 60))
-    count = int(request.args.get("count", 10))
-
-    try:
-        with app_state.api_lock:
-            endtime = time.time()
-            candles = app_state.api_instance.get_candles(active, interval, count, endtime)
-
-            formatted = []
-            for c in candles:
-                formatted.append({
-                    "from": c.get("from"),
-                    "to": c.get("to"),
-                    "open": c.get("open"),
-                    "close": c.get("close"),
-                    "max": c.get("max"),
-                    "min": c.get("min"),
-                    "volume": c.get("volume"),
-                    "color": "green" if c.get("close", 0) >= c.get("open", 0) else "red"
-                })
-
-            return jsonify({
-                "active": active,
-                "interval": interval,
-                "candles": formatted
-            })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/payout/<active>")
-def api_payout(active):
-    """Retorna payout de um par"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
-
-    timeframe = int(request.args.get("timeframe", 1))
-
-    try:
-        with app_state.api_lock:
-            payout = app_state.api_instance.get_payout(active, timeframe)
-            return jsonify({
-                "active": active,
-                "timeframe": timeframe,
-                "payout": payout
-            })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/buy", methods=["POST"])
-def api_buy():
-    """Executa uma ordem de compra"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
-
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Dados não fornecidos"}), 400
-
-    active = data.get("active")
-    amount = data.get("amount", 1)
-    direction = data.get("direction", "CALL")
-    expiration = data.get("expiration", 1)
-
-    if not active:
-        return jsonify({"error": "Par de moedas não especificado"}), 400
-
-    try:
-        with app_state.api_lock:
-            status, order_id = app_state.api_instance.buy_binary(active, amount, direction, expiration)
-
-            return jsonify({
-                "success": status,
-                "order_id": order_id,
-                "active": active,
-                "direction": direction,
-                "amount": amount,
-                "expiration": expiration
-            })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/check/<order_id>")
-def api_check(order_id):
-    """Verifica resultado de uma ordem"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
-
-    try:
-        with app_state.api_lock:
-            try:
-                result = app_state.api_instance.check_win_v3(order_id, polling_time=1)
-                return jsonify({
-                    "order_id": order_id,
-                    "profit": result,
-                    "win": result > 0 if result else None
-                })
-            except:
-                pass
+            if not app_state.connected:
+                self._send_json(503, {"error": "Não conectado"})
+                return
 
             try:
-                result = app_state.api_instance.check_win_v2(order_id, polling_time=1)
-                return jsonify({
-                    "order_id": order_id,
-                    "profit": result,
-                    "win": result > 0 if result else None
-                })
-            except:
-                pass
+                with app_state.lock:
+                    data = app_state.api_instance.get_all_init_v2(0.1)
+                    binarias = []
+                    turbo = []
 
-            return jsonify({"error": "Não foi possível verificar resultado"}), 500
+                    for tipo, lista in [("binary", binarias), ("turbo", turbo)]:
+                        if tipo in data:
+                            for aid, active in data[tipo]["actives"].items():
+                                nome = str(active["name"]).split(".")[1]
+                                if active["enabled"] and not active["is_suspended"]:
+                                    lista.append({
+                                        "id": int(aid),
+                                        "name": nome,
+                                        "type": tipo,
+                                        "is_otc": "OTC" in nome.upper()
+                                    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+                    self._send_json(200, {
+                        "binary": binarias,
+                        "turbo": turbo,
+                        "total": len(binarias) + len(turbo)
+                    })
+                    return
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return
 
-@app.route("/change_mode", methods=["POST"])
-def api_change_mode():
-    """Troca entre REAL e PRACTICE"""
-    if not app_state.ensure_connection():
-        return jsonify({"error": "Não conectado"}), 503
+        # Rota candles
+        if path.startswith("/candles/"):
+            active = path.split("/")[2]
+            interval = int(query.get("interval", [60])[0])
+            count = int(query.get("count", [10])[0])
 
-    data = request.get_json() or {}
-    mode = data.get("mode", "PRACTICE")
+            if not app_state.connected:
+                app_state.connect()
 
-    try:
-        with app_state.api_lock:
-            app_state.api_instance.change_balance(mode)
-            app_state.connection_status["mode"] = mode
-            return jsonify({"success": True, "mode": mode})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            if not app_state.connected:
+                self._send_json(503, {"error": "Não conectado"})
+                return
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INICIALIZAÇÃO
-# ═══════════════════════════════════════════════════════════════════════════════
+            try:
+                with app_state.lock:
+                    endtime = time.time()
+                    candles = app_state.api_instance.get_candles(active, interval, count, endtime)
+
+                    formatted = []
+                    for c in candles:
+                        formatted.append({
+                            "from": c.get("from"),
+                            "to": c.get("to"),
+                            "open": c.get("open"),
+                            "close": c.get("close"),
+                            "max": c.get("max"),
+                            "min": c.get("min"),
+                            "volume": c.get("volume"),
+                            "color": "green" if c.get("close", 0) >= c.get("open", 0) else "red"
+                        })
+
+                    self._send_json(200, {
+                        "active": active,
+                        "interval": interval,
+                        "candles": formatted
+                    })
+                    return
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return
+
+        # Rota payout
+        if path.startswith("/payout/"):
+            active = path.split("/")[2]
+            timeframe = int(query.get("timeframe", [1])[0])
+
+            if not app_state.connected:
+                app_state.connect()
+
+            if not app_state.connected:
+                self._send_json(503, {"error": "Não conectado"})
+                return
+
+            try:
+                with app_state.lock:
+                    payout = app_state.api_instance.get_payout(active, timeframe)
+                    self._send_json(200, {
+                        "active": active,
+                        "timeframe": timeframe,
+                        "payout": payout
+                    })
+                    return
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return
+
+        # Rota não encontrada
+        self._send_json(404, {"error": "Rota não encontrada"})
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        # Ler body
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+
+        try:
+            data = json.loads(body) if body else {}
+        except:
+            data = {}
+
+        # Rota connect
+        if path == "/connect":
+            if data.get("email"):
+                os.environ["BROKER_EMAIL"] = data["email"]
+            if data.get("password"):
+                os.environ["BROKER_PASSWORD"] = data["password"]
+
+            ok = app_state.connect()
+            self._send_json(200, {
+                "success": ok,
+                "status": {
+                    "connected": app_state.connected,
+                    "balance": app_state.balance,
+                    "currency": app_state.currency,
+                    "mode": app_state.mode,
+                    "error": app_state.error
+                }
+            })
+            return
+
+        # Rota buy
+        if path == "/buy":
+            if not app_state.connected:
+                app_state.connect()
+
+            if not app_state.connected:
+                self._send_json(503, {"error": "Não conectado"})
+                return
+
+            active = data.get("active")
+            amount = data.get("amount", 1)
+            direction = data.get("direction", "CALL")
+            expiration = data.get("expiration", 1)
+
+            if not active:
+                self._send_json(400, {"error": "Par de moedas não especificado"})
+                return
+
+            try:
+                with app_state.lock:
+                    status, order_id = app_state.api_instance.buy_binary(active, amount, direction, expiration)
+                    self._send_json(200, {
+                        "success": status,
+                        "order_id": order_id,
+                        "active": active,
+                        "direction": direction,
+                        "amount": amount,
+                        "expiration": expiration
+                    })
+                    return
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return
+
+        # Rota change_mode
+        if path == "/change_mode":
+            if not app_state.connected:
+                app_state.connect()
+
+            if not app_state.connected:
+                self._send_json(503, {"error": "Não conectado"})
+                return
+
+            mode = data.get("mode", "PRACTICE")
+
+            try:
+                with app_state.lock:
+                    app_state.api_instance.change_balance(mode)
+                    app_state.mode = mode
+                    self._send_json(200, {"success": True, "mode": mode})
+                    return
+            except Exception as e:
+                self._send_json(500, {"error": str(e)})
+                return
+
+        # Rota não encontrada
+        self._send_json(404, {"error": "Rota não encontrada"})
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", API_PORT), APIHandler)
+    print(f"[{datetime.now()}] Servidor iniciado na porta {API_PORT}")
+    print(f"[{datetime.now()}] URL: http://0.0.0.0:{API_PORT}")
+    print(f"[{datetime.now()}] API Broker 10 disponível: {API_AVAILABLE}")
+
+    # Tenta conectar na inicialização
+    if API_AVAILABLE:
+        app_state.connect()
+
+    server.serve_forever()
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  BROKER 10 API SERVER - TRADER CRISTÃO v2")
+    print("  BROKER 10 API SERVER - TRADER CRISTÃO (Simples)")
     print("=" * 60)
-
-    app.run(host="0.0.0.0", port=API_PORT, debug=False)
+    run_server()
