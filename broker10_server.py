@@ -175,6 +175,7 @@ def api_connect():
     email = data.get("email", BROKER_EMAIL)
     password = data.get("password", BROKER_PASSWORD)
 
+    # Atualiza variáveis globais
     global BROKER_EMAIL, BROKER_PASSWORD
     BROKER_EMAIL = email
     BROKER_PASSWORD = password
