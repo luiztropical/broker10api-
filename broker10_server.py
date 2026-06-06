@@ -405,3 +405,4 @@ if __name__ == "__main__":
     print("  BROKER 10 API SERVER - TRADER CRISTÃO (Socket)")
     print("=" * 60)
     run_server()
+# teste deploy
