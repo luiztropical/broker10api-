@@ -91,6 +91,7 @@ class AppState:
                 self.connected = False
                 self.error = str(reason)
                 return False
+              
 except Exception as e:
     print("ERRO COMPLETO DA BROKER:")
     print(type(e))
