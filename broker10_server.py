@@ -56,15 +56,15 @@ class AppState:
 
     def connect(self):
 
-    if not API_AVAILABLE:
-        self.error = "API broker10api não instalada"
-        return False
+        if not API_AVAILABLE:
+            self.error = "API broker10api não instalada"
+            return False
 
-    creds = self.get_credentials()
+        creds = self.get_credentials()
 
-    if not creds["email"] or not creds["password"]:
-        self.error = "Credenciais não configuradas"
-        return False
+        if not creds["email"] or not creds["password"]:
+            self.error = "Credenciais não configuradas"
+            return False
 
     try:
         print("=" * 60)
