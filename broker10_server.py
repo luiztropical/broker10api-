@@ -58,49 +58,60 @@ class AppState:
         }
 
     def connect(self):
-        if not API_AVAILABLE:
-            self.error = "API broker10api não instalada"
-            return False
+    if not API_AVAILABLE:
+        self.error = "API broker10api não instalada"
+        return False
 
-        creds = self.get_credentials()
-        if not creds["email"] or not creds["password"]:
-            self.error = "Credenciais não configuradas"
-            return False
+    creds = self.get_credentials()
 
-        try:
-            print(f"[{datetime.now()}] Conectando na Broker 10...")
-            self.api_instance = Broker10_Api(creds["email"], creds["password"])
+    if not creds["email"] or not creds["password"]:
+        self.error = "Credenciais não configuradas"
+        return False
 
-            ok, reason = self.api_instance.connect()
+    try:
+        print(f"[{datetime.now()}] Conectando na Broker 10...")
 
-            print(f"RESULTADO CONNECT: ok={ok}")
-            print(f"REASON: {reason}")
+        self.api_instance = Broker10_Api(
+            creds["email"],
+            creds["password"]
+        )
 
-            if ok:
-                self.connected = True
-                self.error = None
-                try:
-                    self.balance = self.api_instance.get_balance()
-                    self.currency = self.api_instance.get_currency()
-                    self.mode = self.api_instance.get_balance_mode()
-                except:
-                    pass
-                print(f"[{datetime.now()}] Conectado!")
-                return True
-            else:
-                self.connected = False
-                self.error = str(reason)
-                return False
-              
+        ok, reason = self.api_instance.connect()
+
+        print(f"RESULTADO CONNECT: ok={ok}")
+        print(f"REASON: {reason}")
+
+        if ok:
+            self.connected = True
+            self.error = None
+
+            try:
+                self.balance = self.api_instance.get_balance()
+                self.currency = self.api_instance.get_currency()
+                self.mode = self.api_instance.get_balance_mode()
             except Exception as e:
-                print("ERRO COMPLETO DA BROKER:")
-                print(type(e))
-                print(str(e))
+                print(f"Erro obtendo saldo: {e}")
 
-                self.connected = False
-                self.error = str(e)
-                return False
+            print(f"[{datetime.now()}] Conectado!")
+            return True
 
+        else:
+            self.connected = False
+            self.error = str(reason)
+
+            print(f"FALHA CONNECT: {reason}")
+
+            return False
+
+    except Exception as e:
+        print("ERRO COMPLETO DA BROKER:")
+        print(type(e).__name__)
+        print(str(e))
+
+        self.connected = False
+        self.error = str(e)
+
+        return False
 app_state = AppState()
 
 def parse_request(data):
